@@ -7,12 +7,14 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .analyst import ClaudeFinancialAnalyst
 from .connection_manager import ConnectionManager
 from .models import Quote, ScreenerFilter
 from .screener import FinancialScreener
 
 manager = ConnectionManager()
 screener = FinancialScreener()
+analyst = ClaudeFinancialAnalyst(screener)
 
 QUOTE_INTERVAL = 5  # seconds between broadcast cycles
 
@@ -70,6 +72,15 @@ async def screen_stocks(criteria: ScreenerFilter):
 @app.get("/stats")
 async def stats():
     return manager.get_stats()
+
+
+@app.post("/analyze")
+async def analyze(body: dict):
+    query = body.get("query", "")
+    if not query:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="'query' is required")
+    return await analyst.analyze_market_conditions(query)
 
 
 # ── WebSocket endpoint ────────────────────────────────────────────────────────
