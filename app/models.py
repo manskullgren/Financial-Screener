@@ -10,6 +10,7 @@ class Quote(BaseModel):
     volume: Optional[int] = None
     previous_close: Optional[float] = None
     market_cap: Optional[float] = None
+    rsi: Optional[float] = None
 
 
 class ScreenerFilter(BaseModel):
@@ -19,3 +20,5 @@ class ScreenerFilter(BaseModel):
     min_volume: Optional[int] = None
     min_change_percent: Optional[float] = None
     max_change_percent: Optional[float] = None
+    min_rsi: Optional[float] = None
+    max_rsi: Optional[float] = None

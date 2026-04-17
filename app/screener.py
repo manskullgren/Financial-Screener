@@ -3,11 +3,14 @@ import time
 from typing import Dict, List, Optional
 
 import httpx
+import pandas as pd
 
+from .indicators import calculate_rsi
 from .models import Quote, ScreenerFilter
 
 _YF_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
+_RSI_RANGE = "3mo"  # 3 months of daily closes — enough for RSI(14) with Wilder smoothing
 
 
 class FinancialScreener:
@@ -38,14 +41,22 @@ class FinancialScreener:
     async def _fetch_single(self, symbol: str) -> Optional[Dict]:
         try:
             async with httpx.AsyncClient(headers=_HEADERS, timeout=self._timeout) as client:
-                resp = await client.get(f"{_YF_BASE}/{symbol}")
+                resp = await client.get(
+                    f"{_YF_BASE}/{symbol}",
+                    params={"interval": "1d", "range": _RSI_RANGE},
+                )
                 resp.raise_for_status()
                 data = resp.json()
-                meta = data["chart"]["result"][0]["meta"]
+                result = data["chart"]["result"][0]
+                meta = result["meta"]
                 price = meta.get("regularMarketPrice")
                 prev = meta.get("previousClose") or meta.get("chartPreviousClose")
                 change = (price - prev) if price is not None and prev else None
                 change_pct = (change / prev * 100) if change is not None and prev else None
+
+                closes = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                rsi = await calculate_rsi(pd.Series(closes)) if closes else None
+
                 return {
                     "symbol": symbol.upper(),
                     "price": price,
@@ -54,6 +65,7 @@ class FinancialScreener:
                     "volume": meta.get("regularMarketVolume"),
                     "previous_close": prev,
                     "market_cap": meta.get("marketCap"),
+                    "rsi": rsi,
                 }
         except Exception:
             return None
@@ -106,6 +118,10 @@ class FinancialScreener:
             if criteria.max_change_percent is not None and (
                 q.change_percent is None or q.change_percent > criteria.max_change_percent
             ):
+                continue
+            if criteria.min_rsi is not None and (q.rsi is None or q.rsi < criteria.min_rsi):
+                continue
+            if criteria.max_rsi is not None and (q.rsi is None or q.rsi > criteria.max_rsi):
                 continue
             filtered.append(q)
         return filtered
