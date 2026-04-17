@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Financial Screener</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+    header { background: #1a1d27; border-bottom: 1px solid #2d3748; padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+    header h1 { font-size: 1.25rem; font-weight: 700; color: #63b3ed; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #fc8181; flex-shrink: 0; }
+    .status-dot.connected { background: #68d391; }
+    main { padding: 2rem; max-width: 1100px; margin: 0 auto; }
+    section { margin-bottom: 2.5rem; }
+    h2 { font-size: 1rem; font-weight: 600; color: #a0aec0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+    .row { display: flex; gap: 0.75rem; }
+    input[type="text"] {
+      flex: 1; background: #1a1d27; border: 1px solid #2d3748; border-radius: 6px;
+      color: #e2e8f0; padding: 0.5rem 0.75rem; font-size: 0.95rem; outline: none;
+    }
+    input[type="text"]:focus { border-color: #63b3ed; }
+    button {
+      background: #2b6cb0; color: #fff; border: none; border-radius: 6px;
+      padding: 0.5rem 1.1rem; font-size: 0.9rem; cursor: pointer; white-space: nowrap;
+    }
+    button:hover { background: #2c5282; }
+    button.danger { background: #c53030; }
+    button.danger:hover { background: #9b2c2c; }
+    .watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+    .ticker-card {
+      background: #1a1d27; border: 1px solid #2d3748; border-radius: 8px;
+      padding: 1rem 1.25rem; position: relative;
+    }
+    .ticker-card .symbol { font-size: 1.1rem; font-weight: 700; }
+    .ticker-card .price { font-size: 1.6rem; font-weight: 700; margin: 0.25rem 0; }
+    .ticker-card .change { font-size: 0.85rem; }
+    .ticker-card .change.up { color: #68d391; }
+    .ticker-card .change.down { color: #fc8181; }
+    .ticker-card .meta { font-size: 0.78rem; color: #718096; margin-top: 0.5rem; }
+    .remove-btn {
+      position: absolute; top: 0.5rem; right: 0.6rem;
+      background: transparent; color: #718096; border: none; cursor: pointer; font-size: 1rem; padding: 0;
+    }
+    .remove-btn:hover { color: #fc8181; }
+    .screener-filters { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; align-items: flex-end; }
+    .filter-group { display: flex; flex-direction: column; gap: 0.25rem; }
+    .filter-group label { font-size: 0.78rem; color: #718096; }
+    .filter-group input { width: 130px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    thead th { text-align: left; padding: 0.6rem 0.75rem; color: #718096; font-weight: 600; border-bottom: 1px solid #2d3748; }
+    tbody td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #1a1d27; }
+    tbody tr:hover td { background: #1a1d27; }
+    .up { color: #68d391; }
+    .down { color: #fc8181; }
+    #screener-symbols { flex: 2; }
+    #log { background: #1a1d27; border: 1px solid #2d3748; border-radius: 6px; padding: 0.75rem; font-family: monospace; font-size: 0.78rem; height: 120px; overflow-y: auto; color: #a0aec0; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="status-dot" id="dot"></div>
+  <h1>Financial Screener</h1>
+  <span id="status-label" style="font-size:0.85rem;color:#718096;">Disconnected</span>
+</header>
+<main>
+  <section>
+    <h2>Live Watchlist</h2>
+    <div class="row" style="margin-bottom:1rem;">
+      <input type="text" id="symbol-input" placeholder="AAPL, MSFT, TSLA …" />
+      <button onclick="subscribeSymbols()">Add</button>
+    </div>
+    <div class="watchlist" id="watchlist"></div>
+  </section>
+
+  <section>
+    <h2>Screener</h2>
+    <div class="screener-filters">
+      <div class="filter-group">
+        <label>Symbols (comma-separated)</label>
+        <input type="text" id="screener-symbols" placeholder="AAPL,MSFT,GOOGL" />
+      </div>
+      <div class="filter-group">
+        <label>Min Price ($)</label>
+        <input type="text" id="min-price" placeholder="0" />
+      </div>
+      <div class="filter-group">
+        <label>Max Price ($)</label>
+        <input type="text" id="max-price" placeholder="any" />
+      </div>
+      <div class="filter-group">
+        <label>Min Volume</label>
+        <input type="text" id="min-volume" placeholder="0" />
+      </div>
+      <div class="filter-group">
+        <label>Min Change %</label>
+        <input type="text" id="min-chg" placeholder="-100" />
+      </div>
+      <div class="filter-group">
+        <label>Max Change %</label>
+        <input type="text" id="max-chg" placeholder="100" />
+      </div>
+      <button onclick="runScreener()">Run Screen</button>
+    </div>
+    <table id="screener-table">
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Price</th><th>Change</th><th>Change %</th><th>Volume</th><th>Prev Close</th>
+        </tr>
+      </thead>
+      <tbody id="screener-body"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Event Log</h2>
+    <div id="log"></div>
+  </section>
+</main>
+
+<script>
+  let ws = null;
+  const cards = {};
+
+  function log(msg) {
+    const el = document.getElementById('log');
+    const line = document.createElement('div');
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function setConnected(ok) {
+    document.getElementById('dot').className = 'status-dot' + (ok ? ' connected' : '');
+    document.getElementById('status-label').textContent = ok ? 'Connected' : 'Disconnected';
+  }
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onopen = () => { setConnected(true); log('WebSocket connected'); };
+    ws.onclose = () => { setConnected(false); log('WebSocket disconnected — retrying in 3s…'); setTimeout(connect, 3000); };
+    ws.onerror = () => log('WebSocket error');
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'quote') updateCard(msg.symbol, msg.data);
+      else if (msg.type === 'subscribed') log(`Subscribed to ${msg.symbol}`);
+      else if (msg.type === 'unsubscribed') { log(`Unsubscribed from ${msg.symbol}`); removeCard(msg.symbol); }
+      else if (msg.type === 'error') log(`Error: ${msg.message}`);
+    };
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    else log('Not connected');
+  }
+
+  function subscribeSymbols() {
+    const raw = document.getElementById('symbol-input').value;
+    raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean).forEach(sym => {
+      if (!cards[sym]) {
+        createCard(sym);
+        send({ action: 'subscribe', symbol: sym });
+      }
+    });
+    document.getElementById('symbol-input').value = '';
+  }
+
+  function createCard(symbol) {
+    const card = document.createElement('div');
+    card.className = 'ticker-card';
+    card.id = `card-${symbol}`;
+    card.innerHTML = `
+      <button class="remove-btn" onclick="unsubscribe('${symbol}')">✕</button>
+      <div class="symbol">${symbol}</div>
+      <div class="price" id="price-${symbol}">—</div>
+      <div class="change" id="change-${symbol}">—</div>
+      <div class="meta" id="meta-${symbol}"></div>`;
+    document.getElementById('watchlist').appendChild(card);
+    cards[symbol] = true;
+  }
+
+  function updateCard(symbol, data) {
+    const priceEl = document.getElementById(`price-${symbol}`);
+    const changeEl = document.getElementById(`change-${symbol}`);
+    const metaEl = document.getElementById(`meta-${symbol}`);
+    if (!priceEl) return;
+    priceEl.textContent = data.price != null ? `$${data.price.toFixed(2)}` : '—';
+    const chg = data.change, pct = data.change_percent;
+    const sign = chg >= 0 ? '+' : '';
+    changeEl.textContent = chg != null ? `${sign}${chg.toFixed(2)} (${sign}${pct.toFixed(2)}%)` : '—';
+    changeEl.className = 'change ' + (chg >= 0 ? 'up' : 'down');
+    const vol = data.volume != null ? `Vol: ${Number(data.volume).toLocaleString()}` : '';
+    metaEl.textContent = vol;
+  }
+
+  function removeCard(symbol) {
+    const el = document.getElementById(`card-${symbol}`);
+    if (el) el.remove();
+    delete cards[symbol];
+  }
+
+  function unsubscribe(symbol) {
+    send({ action: 'unsubscribe', symbol });
+  }
+
+  async function runScreener() {
+    const symbolsRaw = document.getElementById('screener-symbols').value;
+    const symbols = symbolsRaw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+    if (!symbols.length) { alert('Enter at least one symbol'); return; }
+    const body = { symbols };
+    const minPrice = document.getElementById('min-price').value;
+    const maxPrice = document.getElementById('max-price').value;
+    const minVol   = document.getElementById('min-volume').value;
+    const minChg   = document.getElementById('min-chg').value;
+    const maxChg   = document.getElementById('max-chg').value;
+    if (minPrice) body.min_price = parseFloat(minPrice);
+    if (maxPrice) body.max_price = parseFloat(maxPrice);
+    if (minVol)   body.min_volume = parseInt(minVol);
+    if (minChg)   body.min_change_percent = parseFloat(minChg);
+    if (maxChg)   body.max_change_percent = parseFloat(maxChg);
+
+    try {
+      const resp = await fetch('/screen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const results = await resp.json();
+      const tbody = document.getElementById('screener-body');
+      tbody.innerHTML = '';
+      results.forEach(q => {
+        const sign = (q.change ?? 0) >= 0 ? '+' : '';
+        const cls  = (q.change ?? 0) >= 0 ? 'up' : 'down';
+        tbody.innerHTML += `
+          <tr>
+            <td><strong>${q.symbol}</strong></td>
+            <td>${q.price != null ? '$'+q.price.toFixed(2) : '—'}</td>
+            <td class="${cls}">${q.change != null ? sign+q.change.toFixed(2) : '—'}</td>
+            <td class="${cls}">${q.change_percent != null ? sign+q.change_percent.toFixed(2)+'%' : '—'}</td>
+            <td>${q.volume != null ? Number(q.volume).toLocaleString() : '—'}</td>
+            <td>${q.previous_close != null ? '$'+q.previous_close.toFixed(2) : '—'}</td>
+          </tr>`;
+      });
+      log(`Screener returned ${results.length} result(s)`);
+    } catch (e) {
+      log(`Screener error: ${e.message}`);
+    }
+  }
+
+  document.getElementById('symbol-input').addEventListener('keydown', e => { if (e.key === 'Enter') subscribeSymbols(); });
+  connect();
+</script>
+</body>
+</html>
