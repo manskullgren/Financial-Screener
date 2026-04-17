@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 import httpx
 import pandas as pd
 
-from .indicators import calculate_rsi
+from .indicators import calculate_rsi, calculate_var
 from .models import Quote, ScreenerFilter
 
 _YF_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
@@ -33,8 +33,11 @@ class FinancialScreener:
         batch: Dict[str, Dict] = {}
         for symbol, raw in zip(symbols, raw_quotes):
             if raw is not None:
-                cache_key = f"quote:{symbol}"
-                self._store_cache(cache_key, raw)
+                # Pop internal closes before caching/returning as a quote dict
+                closes = raw.pop("_closes", [])
+                if closes:
+                    self._store_cache(f"closes:{symbol}", closes)
+                self._store_cache(f"quote:{symbol}", raw)
                 batch[symbol] = raw
         return batch
 
@@ -58,6 +61,7 @@ class FinancialScreener:
                 rsi = await calculate_rsi(pd.Series(closes)) if closes else None
 
                 return {
+                    "_closes": closes,  # stripped by _fetch_batch_quotes before public exposure
                     "symbol": symbol.upper(),
                     "price": price,
                     "change": round(change, 4) if change is not None else None,
@@ -100,6 +104,18 @@ class FinancialScreener:
     async def get_quotes(self, symbols: List[str]) -> List[Quote]:
         data = await self.get_real_time_quote(symbols)
         return [Quote(**v) for v in data.values()]
+
+    async def get_returns(self, symbol: str) -> Optional[pd.Series]:
+        """Return daily log-pct returns for symbol, fetching if not cached."""
+        sym = symbol.upper()
+        closes_key = f"closes:{sym}"
+        if not self._is_cache_fresh(closes_key, max_age=60):
+            await self.get_real_time_quote([sym])  # populates closes cache as a side-effect
+        closes = self._l1_cache.get(closes_key)
+        if not closes:
+            return None
+        series = pd.Series([c for c in closes if c is not None], dtype=float)
+        return series.pct_change().dropna()
 
     async def screen(self, criteria: ScreenerFilter) -> List[Quote]:
         quotes = await self.get_quotes(criteria.symbols)

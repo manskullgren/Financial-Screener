@@ -1,9 +1,13 @@
+import asyncio
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from anthropic import AsyncAnthropic
 
+import pandas as pd
+
+from .indicators import calculate_var
 from .models import ScreenerFilter
 from .screener import FinancialScreener
 
@@ -138,30 +142,54 @@ class ClaudeFinancialAnalyst:
 
         if name == "calculate_portfolio_risk":
             positions = tool_input["positions"]
-            symbols = [p["symbol"].upper() for p in positions]
-            quotes = await self.screener.get_real_time_quote(symbols)
+
+            # Fetch returns and quotes concurrently
+            syms = [p["symbol"].upper() for p in positions]
+            returns_list, quotes = await asyncio.gather(
+                asyncio.gather(*[self.screener.get_returns(s) for s in syms]),
+                self.screener.get_real_time_quote(syms),
+            )
+            returns_map = {s: r for s, r in zip(syms, returns_list) if r is not None}
+
+            # Build weighted portfolio return series on a common date index
             rows: List[Dict] = []
-            weighted_change = 0.0
+            portfolio_returns: Optional[pd.Series] = None
+            if returns_map:
+                df = pd.DataFrame(returns_map).dropna()
+                portfolio_returns = sum(
+                    df[p["symbol"].upper()] * p["weight"]
+                    for p in positions
+                    if p["symbol"].upper() in df.columns
+                )
+
             for pos in positions:
                 sym = pos["symbol"].upper()
                 q = quotes.get(sym, {})
-                chg = q.get("change_percent") or 0.0
-                contrib = chg * pos["weight"]
-                weighted_change += contrib
+                sym_returns = returns_map.get(sym)
+                sym_var = (
+                    round(calculate_var(sym_returns) * 100, 4)
+                    if sym_returns is not None and len(sym_returns) >= 10
+                    else None
+                )
                 rows.append(
                     {
                         "symbol": sym,
                         "weight": pos["weight"],
-                        "change_percent": chg,
-                        "weighted_contribution": round(contrib, 4),
+                        "change_percent": q.get("change_percent"),
+                        "var_1d_95_pct": sym_var,
                     }
                 )
+
+            port_var = (
+                round(calculate_var(portfolio_returns) * 100, 4)
+                if portfolio_returns is not None and len(portfolio_returns) >= 10
+                else None
+            )
             return json.dumps(
                 {
                     "positions": rows,
-                    "portfolio_daily_change_pct": round(weighted_change, 4),
-                    # 1-day 95% VaR proxy: |daily_change| × 1.645
-                    "var_1d_95_proxy_pct": round(abs(weighted_change) * 1.645, 4),
+                    "portfolio_var_1d_95_pct": port_var,
+                    "var_method": "min(historical, parametric, cornish-fisher)",
                 }
             )
 
